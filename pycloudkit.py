@@ -31,6 +31,52 @@ import sys
 import pycloudkit_config as cfg
 
 
+def getZones(argv=None):
+    # Outputs a curl command to fetch data from CloudKit.
+
+    if not argv:
+        argv = sys.argv
+
+    # Get ISO 8601 date, cut milliseconds.
+    date = datetime.datetime.utcnow().isoformat()[:-7] + 'Z'
+
+    # Load JSON request from config.
+    raw_body = ''
+    _hash = hashlib.sha256(raw_body.encode('utf-8')).digest()
+    body = base64.b64encode(_hash).decode('utf-8')
+
+    # Construct URL to CloudKit container.
+    web_service_url = '/database/1/' + cfg.container +\
+                      '/development/public/zones/list'
+
+    # Load API key form config.
+    key_id = cfg.key_id
+
+    # Read out certificate file corresponding to API key.
+    with open('eckey.pem', 'r') as pem_file:
+        signing_key = ecdsa.SigningKey.from_pem(pem_file.read())
+
+    # Construct payload.
+    unsigned_data = ':'.join([date, body, web_service_url]).encode('utf-8')
+
+    # Sign payload via certificate.
+    signed_data = signing_key.sign(unsigned_data,
+                                   hashfunc=hashlib.sha256,
+                                   sigencode=ecdsa.util.sigencode_der)
+
+    signature = base64.b64encode(signed_data).decode('utf-8')
+
+    # Construct curl command.
+    output = 'curl -X GET -H "content-type: text/plain" ' +\
+             '-H "X-Apple-CloudKit-Request-KeyID: ' + key_id + '" ' +\
+             '-H "X-Apple-CloudKit-Request-ISO8601Date: ' + date + '" ' +\
+             '-H "X-Apple-CloudKit-Request-SignatureV1: ' + signature + '" ' +\
+             '-d \'' + raw_body + '\' ' +\
+             'https://api.apple-cloudkit.com' + web_service_url
+
+    print(output)
+
+
 def main(argv=None):
     # Outputs a curl command to fetch data from CloudKit.
 
@@ -77,4 +123,4 @@ def main(argv=None):
     print(output)
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+    sys.exit(getZones(sys.argv))
