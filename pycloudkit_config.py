@@ -21,6 +21,5 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-request = '{"query":{"recordType":"Test"}}'
 key_id = 'Enter your API key here.'
 container = 'iCloud.your.container'

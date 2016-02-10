@@ -27,29 +27,41 @@ import base64
 import hashlib
 import datetime
 import sys
+import json
 
 import pycloudkit_config as cfg
 
+# Python version agnostic urllib imports
+if sys.version_info.major < 3:
+    # Python 2 (or older)
+    from urllib2 import HTTPPasswordMgrWithDefaultRealm, \
+        HTTPBasicAuthHandler, Request, build_opener
+    from urllib import urlencode
+else:
+    # Python 3 (or newer)
+    from urllib.request import HTTPPasswordMgrWithDefaultRealm, \
+        HTTPBasicAuthHandler, Request, build_opener
+    from urllib.parse import urlencode
 
-def getZones(argv=None):
-    # Outputs a curl command to fetch data from CloudKit.
 
-    if not argv:
-        argv = sys.argv
+def cloudkit_request(cloudkit_resource_url, data):
+    """
+    Uses HTTP GET or POST to interact with CloudKit. If data is empty, Uses
+    GET, else, POSTs the data.
+    """
 
     # Get ISO 8601 date, cut milliseconds.
     date = datetime.datetime.utcnow().isoformat()[:-7] + 'Z'
 
     # Load JSON request from config.
-    raw_body = ''
-    _hash = hashlib.sha256(raw_body.encode('utf-8')).digest()
+    _hash = hashlib.sha256(data.encode('utf-8')).digest()
     body = base64.b64encode(_hash).decode('utf-8')
 
     # Construct URL to CloudKit container.
     web_service_url = '/database/1/' + cfg.container +\
-                      '/development/public/zones/list'
+                      cloudkit_resource_url
 
-    # Load API key form config.
+    # Load API key from config.
     key_id = cfg.key_id
 
     # Read out certificate file corresponding to API key.
@@ -66,61 +78,90 @@ def getZones(argv=None):
 
     signature = base64.b64encode(signed_data).decode('utf-8')
 
-    # Construct curl command.
-    output = 'curl -X GET -H "content-type: text/plain" ' +\
-             '-H "X-Apple-CloudKit-Request-KeyID: ' + key_id + '" ' +\
-             '-H "X-Apple-CloudKit-Request-ISO8601Date: ' + date + '" ' +\
-             '-H "X-Apple-CloudKit-Request-SignatureV1: ' + signature + '" ' +\
-             '-d \'' + raw_body + '\' ' +\
-             'https://api.apple-cloudkit.com' + web_service_url
+    headers = {
+        'X-Apple-CloudKit-Request-KeyID': key_id,
+        'X-Apple-CloudKit-Request-ISO8601Date': date,
+        'X-Apple-CloudKit-Request-SignatureV1': signature
+    }
 
-    print(output)
+    if data:
+        req_type = 'POST'
+    else:
+        req_type = 'GET'
+
+    result = curl('https://api.apple-cloudkit.com' + web_service_url,
+                  req_type=req_type,
+                  data=data,
+                  headers=headers)
+
+    return result
 
 
-def main(argv=None):
-    # Outputs a curl command to fetch data from CloudKit.
+def curl(url, params=None, auth=None, req_type='GET', data=None, headers=None):
+    """Provides HTTP interaction like curl."""
 
-    if not argv:
-        argv = sys.argv
+    post_req = ['POST', 'PUT']
+    get_req = ['GET', 'DELETE']
 
-    # Get ISO 8601 date, cut milliseconds.
-    date = datetime.datetime.utcnow().isoformat()[:-7] + 'Z'
+    if params is not None:
+        url += '?' + urlencode(params)
 
-    # Load JSON request from config.
-    raw_body = cfg.request
-    _hash = hashlib.sha256(raw_body.encode('utf-8')).digest()
-    body = base64.b64encode(_hash).decode('utf-8')
+    if req_type not in post_req + get_req:
+        raise IOError('Wrong request type "%s" passed' % req_type)
 
-    # Construct URL to CloudKit container.
-    web_service_url = '/database/1/' + cfg.container +\
-                      '/development/public/records/query'
+    _headers = {}
+    handler_chain = []
 
-    # Load API key form config.
-    key_id = cfg.key_id
+    if auth is not None:
+        manager = HTTPPasswordMgrWithDefaultRealm()
+        manager.add_password(None, url, auth['user'], auth['pass'])
+        handler_chain.append(HTTPBasicAuthHandler(manager))
 
-    # Read out certificate file corresponding to API key.
-    with open('eckey.pem', 'r') as pem_file:
-        signing_key = ecdsa.SigningKey.from_pem(pem_file.read())
+    if req_type in post_req and data is not None:
+        _headers['Content-Length'] = len(data)
 
-    # Construct payload.
-    unsigned_data = ':'.join([date, body, web_service_url]).encode('utf-8')
+    if headers is not None:
+        _headers.update(headers)
 
-    # Sign payload via certificate.
-    signed_data = signing_key.sign(unsigned_data,
-                                   hashfunc=hashlib.sha256,
-                                   sigencode=ecdsa.util.sigencode_der)
+    director = build_opener(*handler_chain)
 
-    signature = base64.b64encode(signed_data).decode('utf-8')
+    if req_type in post_req:
+        if sys.version_info.major < 3:
+            _data = bytes(data)
+        else:
+            _data = bytes(data, encoding='utf8')
+        req = Request(url, headers=_headers, data=_data)
 
-    # Construct curl command.
-    output = 'curl -X POST -H "content-type: text/plain" ' +\
-             '-H "X-Apple-CloudKit-Request-KeyID: ' + key_id + '" ' +\
-             '-H "X-Apple-CloudKit-Request-ISO8601Date: ' + date + '" ' +\
-             '-H "X-Apple-CloudKit-Request-SignatureV1: ' + signature + '" ' +\
-             '-d \'' + raw_body + '\' ' +\
-             'https://api.apple-cloudkit.com' + web_service_url
+    else:
+        req = Request(url, headers=_headers)
 
-    print(output)
+    req.get_method = lambda: req_type
+    result = director.open(req)
+
+    return {
+        'httpcode': result.code,
+        'headers': result.info(),
+        'content': result.read().decode('utf-8')
+    }
+
+
+def main():
+    print('Requesting list of zones...')
+    result_zones = cloudkit_request('/development/public/zones/list', '')
+    print(result_zones['content'])
+
+    json_query = {
+        'query': {
+            'recordType': 'Authors'
+        }
+    }
+
+    print('Posting query for authors...')
+    result_query_authors = cloudkit_request(
+                               '/development/public/records/query',
+                               json.dumps(json_query))
+    print(result_query_authors['content'])
+
 
 if __name__ == '__main__':
-    sys.exit(getZones(sys.argv))
+    sys.exit(main())
