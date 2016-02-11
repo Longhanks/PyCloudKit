@@ -145,23 +145,93 @@ def curl(url, params=None, auth=None, req_type='GET', data=None, headers=None):
     }
 
 
+def query_records(record_type):
+    """Queries CloudKit for all records of type record_type."""
+    json_query = {
+        'query': {
+            'recordType': record_type
+        }
+    }
+
+    records = []
+    while True:
+        result_query_authors = cloudkit_request(
+            '/development/public/records/query',
+            json.dumps(json_query))
+        result_query_authors = json.loads(result_query_authors['content'])
+
+        records += result_query_authors['records']
+
+        if 'continuationMarker' in result_query_authors.keys():
+            json_query['continuationMarker'] = \
+                result_query_authors['continuationMarker']
+        else:
+            break
+
+    return records
+
+
 def main():
     print('Requesting list of zones...')
     result_zones = cloudkit_request('/development/public/zones/list', '')
     print(result_zones['content'])
 
-    json_query = {
-        'query': {
-            'recordType': 'Authors'
-        }
+    print('Querying all authors...')
+    print(query_records('Authors'))
+
+    # new_author_data = {
+    #     'operations': [{
+    #         'operationType': 'create',
+    #         'record': {
+    #             'recordType': 'Authors',
+    #             'fields': {
+    #                 'firstname': {
+    #                     'value': 'Andreas'
+    #                 },
+    #                 'lastname': {
+    #                     'value': 'Schulz'
+    #                 },
+    #                 'title': {
+    #                     'value': 'Der Azubi vom Alex'
+    #                 }
+    #             }
+    #         }
+    #     }]
+    # }
+    # print('Posting operation to create author...')
+    # result_modify_authors = cloudkit_request(
+    #     '/development/public/records/modify',
+    #     json.dumps(new_author_data))
+    # print(result_modify_authors['content'])
+
+    new_quote_data = {
+        'operations': [{
+            'operationType': 'create',
+            'record': {
+                'recordType': 'Quotes',
+                'fields': {
+                    'text': {
+                        'value': 'Ich bin ein tolles Zitat.'
+                    },
+                    'author': {
+                        'value': {
+                            'recordName': '5A3C2FFE-0A2C-4D1A-88CE-FAA4BC49E394',
+                            'zoneID:': {
+                                'zoneName': '_defaultZone'
+                            },
+                            'action': 'DELETE_SELF'
+                        }
+                    }
+                }
+            }
+        }]
     }
 
-    print('Posting query for authors...')
-    result_query_authors = cloudkit_request(
-                               '/development/public/records/query',
-                               json.dumps(json_query))
-    print(result_query_authors['content'])
-
+    print('Posting operation to create quote...')
+    result_modify_quotes = cloudkit_request(
+        '/development/public/records/modify',
+        json.dumps(new_quote_data))
+    print(result_modify_quotes['content'])
 
 if __name__ == '__main__':
     sys.exit(main())
